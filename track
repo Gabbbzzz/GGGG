@@ -118,6 +118,7 @@ window._loadDBFromFirestore = async (userId) => {
   --header-h: 56px;
 }
 
+
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;}
 html{scroll-behavior:smooth;height:100%;}
 body{
@@ -2309,6 +2310,417 @@ Chart.defaults.color='#8888a0';
 Chart.defaults.font.family="'Barlow', sans-serif";
 // Note: renderDashboard() is now called after Firebase auth + data load
 // The auth screen handles the rest via onAuthStateChanged
+
+
+// ============ FONCTIONS NUTRITION AVEC SAUVEGARDE FIRESTORE ============
+
+// 1️⃣ SAUVEGARDER LES OBJECTIFS DE CALORIES/MACROS
+async function saveGoals() {
+  const cal = parseInt(document.getElementById('goal-cal').value) || 0;
+  const prot = parseInt(document.getElementById('goal-prot').value) || 0;
+  const carb = parseInt(document.getElementById('goal-carb').value) || 0;
+  const fat = parseInt(document.getElementById('goal-fat').value) || 0;
+
+  // Mettre à jour l'objet DB
+  DB.goals = { cal, prot, carb, fat };
+
+  // 🔥 SAUVEGARDER DANS FIRESTORE
+  try {
+    await window._fbSetDoc('users', window._currentUser.uid, DB);
+    console.log("✅ Objectifs sauvegardés:", DB.goals);
+    notify("✅ Objectifs sauvegardés !");
+  } catch(err) {
+    console.error("❌ Erreur sauvegarde objectifs:", err);
+    notify("❌ Erreur sauvegarde");
+  }
+}
+
+// 2️⃣ AJOUTER UN ALIMENT ET SAUVEGARDER
+async function addFood() {
+  const foodName = document.getElementById('food-name').value.trim();
+  const calories = parseInt(document.getElementById('food-cal').value) || 0;
+  const protein = parseInt(document.getElementById('food-prot').value) || 0;
+  const carbs = parseInt(document.getElementById('food-carb').value) || 0;
+  const fat = parseInt(document.getElementById('food-fat').value) || 0;
+
+  if (!foodName) {
+    notify("❌ Entrez un nom d'aliment");
+    return;
+  }
+
+  // Créer l'objet aliment
+  const food = {
+    id: Date.now(),
+    name: foodName,
+    date: today(),
+    cal: calories,
+    prot: protein,
+    carb: carbs,
+    fat: fat
+  };
+
+  // Ajouter à l'array
+  if (!DB.foods) DB.foods = [];
+  DB.foods.push(food);
+
+  // 🔥 SAUVEGARDER DANS FIRESTORE
+  try {
+    await window._fbSetDoc('users', window._currentUser.uid, DB);
+    console.log("✅ Aliment ajouté:", food);
+    notify("✅ Aliment enregistré !");
+    
+    // Vider le formulaire
+    document.getElementById('food-name').value = '';
+    document.getElementById('food-cal').value = '';
+    document.getElementById('food-prot').value = '';
+    document.getElementById('food-carb').value = '';
+    document.getElementById('food-fat').value = '';
+    
+    // Rafraîchir l'affichage
+    renderFoodLog();
+  } catch(err) {
+    console.error("❌ Erreur ajout aliment:", err);
+    notify("❌ Erreur sauvegarde aliment");
+  }
+}
+
+// 3️⃣ AFFICHER LES ALIMENTS ET CALCULER LES TOTAUX
+function renderFoodLog() {
+  const dateFilter = document.getElementById('food-date-filter').value || today();
+  
+  // Filtrer les aliments du jour
+  const dayFoods = (DB.foods || []).filter(f => f.date === dateFilter);
+  
+  // Calculer les totaux
+  let totalCal = 0, totalProt = 0, totalCarb = 0, totalFat = 0;
+  
+  dayFoods.forEach(f => {
+    totalCal += f.cal || 0;
+    totalProt += f.prot || 0;
+    totalCarb += f.carb || 0;
+    totalFat += f.fat || 0;
+  });
+
+  // Mettre à jour la bague de calories
+  const goalCal = DB.goals.cal || 2500;
+  const progress = Math.min((totalCal / goalCal) * 100, 100);
+  
+  document.getElementById('nut-cal-txt').textContent = totalCal;
+  document.getElementById('nut-cal-goal-txt').textContent = `/ ${goalCal} kcal`;
+  document.getElementById('nut-cal-ring').style.strokeDashoffset = 263.9 - (progress / 100) * 263.9;
+
+  // Mettre à jour les macros
+  const goalProt = DB.goals.prot || 150;
+  const goalCarb = DB.goals.carb || 300;
+  const goalFat = DB.goals.fat || 70;
+
+  document.getElementById('nut-prot-txt').textContent = `${totalProt}g / ${goalProt}g`;
+  document.getElementById('bar-prot').style.width = Math.min((totalProt / goalProt) * 100, 100) + '%';
+
+  document.getElementById('nut-carb-txt').textContent = `${totalCarb}g / ${goalCarb}g`;
+  document.getElementById('bar-carb').style.width = Math.min((totalCarb / goalCarb) * 100, 100) + '%';
+
+  document.getElementById('nut-fat-txt').textContent = `${totalFat}g / ${goalFat}g`;
+  document.getElementById('bar-fat').style.width = Math.min((totalFat / goalFat) * 100, 100) + '%';
+
+  // Afficher la liste des aliments
+  const foodList = document.getElementById('food-log-list');
+  if (dayFoods.length === 0) {
+    foodList.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-ico">🥗</div><p>Aucun aliment enregistré</p></div>';
+  } else {
+    foodList.innerHTML = dayFoods.map(f => `
+      <div class="food-item">
+        <div class="food-info">
+          <div class="food-name">${f.name}</div>
+          <div class="food-macros">${f.cal} kcal • P:${f.prot}g C:${f.carb}g L:${f.fat}g</div>
+        </div>
+        <button class="btn btn-g btn-sm" onclick="deleteFood(${f.id})">🗑️</button>
+      </div>
+    `).join('');
+  }
+}
+
+// 4️⃣ SUPPRIMER UN ALIMENT
+async function deleteFood(foodId) {
+  if (!DB.foods) return;
+  DB.foods = DB.foods.filter(f => f.id !== foodId);
+  
+  try {
+    await window._fbSetDoc('users', window._currentUser.uid, DB);
+    console.log("✅ Aliment supprimé");
+    notify("✅ Aliment supprimé");
+    renderFoodLog();
+  } catch(err) {
+    console.error("❌ Erreur suppression:", err);
+  }
+}
+
+// 5️⃣ FONCTION HELPER - DATE AUJOURD'HUI
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+// 6️⃣ FONCTION HELPER - NOTIFICATION
+function notify(msg) {
+  const notif = document.getElementById('notif');
+  notif.textContent = msg;
+  notif.classList.add('show');
+  setTimeout(() => notif.classList.remove('show'), 2000);
+}
+
+// ============ HISTORIQUE DES PERFORMANCES PAR EXERCICE ============
+
+// 1️⃣ QUAND ON SÉLECTIONNE UN EXERCICE, AFFICHER SON HISTORIQUE
+function selectExercise(exoName) {
+  document.getElementById('exo-search').value = exoName;
+  document.getElementById('exo-select-val').value = exoName;
+  document.getElementById('exo-dropdown').style.display = 'none';
+  
+  // Afficher le badge de l'exo sélectionné
+  document.getElementById('exo-selected-badge').innerHTML = `
+    <div style="background:rgba(200,241,53,.1);border:1px solid rgba(200,241,53,.3);border-radius:12px;padding:12px;font-size:13px">
+      <div style="color:var(--acc);font-weight:700;margin-bottom:8px">📊 Historique : ${exoName}</div>
+      <div id="exo-history-list"></div>
+    </div>
+  `;
+  document.getElementById('exo-selected-badge').style.display = 'block';
+  
+  // Charger l'historique
+  showExerciseHistory(exoName);
+}
+
+// 2️⃣ AFFICHER L'HISTORIQUE DE L'EXERCICE
+function showExerciseHistory(exoName) {
+  // Filtrer toutes les sessions qui contiennent cet exercice
+  const exoSessions = [];
+  
+  if (DB.sessions && Array.isArray(DB.sessions)) {
+    DB.sessions.forEach(session => {
+      if (session.exercises && Array.isArray(session.exercises)) {
+        session.exercises.forEach(exo => {
+          if (exo.name === exoName) {
+            exoSessions.push({
+              date: session.date || 'N/A',
+              weight: exo.weight || 0,
+              reps: exo.reps || 0,
+              sets: exo.sets || 0,
+              notes: exo.notes || ''
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // Trier par date (plus r��cent d'abord)
+  exoSessions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // Afficher les 5 dernières performances
+  const historyList = document.getElementById('exo-history-list');
+  if (exoSessions.length === 0) {
+    historyList.innerHTML = '<div style="color:var(--txt3);font-size:12px">Aucun historique pour cet exercice</div>';
+  } else {
+    historyList.innerHTML = exoSessions.slice(0, 5).map(perf => `
+      <div style="padding:10px;background:rgba(255,255,255,.05);border-radius:8px;margin-bottom:8px;font-size:12px;border-left:3px solid var(--acc)">
+        <div style="color:var(--txt2);font-weight:600">${formatDate(perf.date)}</div>
+        <div style="color:var(--txt);margin-top:4px">
+          <strong>${perf.weight}kg</strong> × ${perf.reps} reps (${perf.sets} séries)
+        </div>
+        ${perf.notes ? `<div style="color:var(--txt3);margin-top:4px;font-style:italic">"${perf.notes}"</div>` : ''}
+      </div>
+    `).join('');
+    
+    // Afficher aussi le PR (meilleur poids)
+    const maxWeight = Math.max(...exoSessions.map(p => p.weight));
+    const prSession = exoSessions.find(p => p.weight === maxWeight);
+    historyList.innerHTML += `
+      <div style="padding:12px;background:rgba(255,179,71,.1);border:1px solid rgba(255,179,71,.3);border-radius:8px;margin-top:8px;font-size:12px">
+        <div style="color:var(--acc4);font-weight:700">🏆 PR: ${maxWeight}kg</div>
+        <div style="color:var(--txt3);margin-top:4px">${formatDate(prSession.date)}</div>
+      </div>
+    `;
+  }
+}
+
+// 3️⃣ FORMATER LA DATE
+function formatDate(dateStr) {
+  if (!dateStr) return 'N/A';
+  const date = new Date(dateStr);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  if (date.toDateString() === today.toDateString()) {
+    return "Aujourd'hui";
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return "Hier";
+  } else {
+    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+}
+
+// 4️⃣ MODIFIER LA FONCTION searchExos POUR PERMETTRE LA SÉLECTION
+function searchExos() {
+  const input = document.getElementById('exo-search').value.toLowerCase().trim();
+  const dropdown = document.getElementById('exo-dropdown');
+  
+  if (!input || input.length < 1) {
+    dropdown.style.display = 'none';
+    return;
+  }
+
+  // Liste complète des exercices
+  const allExos = [
+    'Développé couché', 'Développé assis', 'Écartés haltères',
+    'Tractions', 'Tirage horizontal', 'Tirage vertical', 'Rangées haltères',
+    'Développé militaire', 'Élévations latérales', 'Élévations frontales',
+    'Curls haltères', 'Curls barre', 'Curls pupitre',
+    'Dips triceps', 'Extension triceps', 'Pompes',
+    'Squats', 'Leg press', 'Fentes', 'Leg curl', 'Leg extension',
+    'Crunchs', 'Ab wheel', 'Planches',
+    'Burpees', 'Corde à sauter', 'Vélo elliptique', 'Tapis roulant'
+  ];
+
+  // Filtrer
+  const filtered = allExos.filter(e => e.toLowerCase().includes(input));
+
+  if (filtered.length === 0) {
+    dropdown.style.display = 'none';
+    return;
+  }
+
+  // Afficher la liste
+  dropdown.innerHTML = filtered.map(exo => `
+    <div onclick="selectExercise('${exo}')" style="padding:12px 16px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:14px;color:var(--txt);transition:all .1s">
+      <div onclick="this.parentElement.style.background='rgba(200,241,53,.1)'">${exo}</div>
+    </div>
+  `).join('');
+  dropdown.style.display = 'block';
+}
+
+// 5️⃣ S'ASSURER QUE SAVEFUNCTION ENREGISTRE AVEC DATE
+async function saveSession() {
+  const sessionName = document.getElementById('session-name').value.trim() || 'Séance sans nom';
+  const sessionMuscle = document.getElementById('session-muscle').value || 'Générale';
+  const sessionExercises = window._currentSessionExercises || [];
+
+  if (sessionExercises.length === 0) {
+    notify("❌ Ajoutez au moins un exercice");
+    return;
+  }
+
+  const session = {
+    id: Date.now(),
+    date: today(),
+    timestamp: new Date().toISOString(),
+    name: sessionName,
+    muscle: sessionMuscle,
+    exercises: sessionExercises,
+    duration: document.getElementById('session-timer').textContent || '00:00:00'
+  };
+
+  if (!DB.sessions) DB.sessions = [];
+  DB.sessions.push(session);
+
+  try {
+    await window._fbSetDoc('users', window._currentUser.uid, DB);
+    console.log("✅ Séance sauvegardée:", session);
+    notify("✅ Séance enregistrée !");
+    
+    // Réinitialiser
+    document.getElementById('session-name').value = '';
+    document.getElementById('session-muscle').value = '';
+    window._currentSessionExercises = [];
+    document.getElementById('session-exercises').innerHTML = '<div class="empty-state"><div class="empty-ico">🏋️</div><p>Aucun exercice ajouté</p></div>';
+    
+    // Retour au dashboard
+    showPage('dashboard');
+    renderDashboard();
+  } catch(err) {
+    console.error("❌ Erreur sauvegarde séance:", err);
+    notify("❌ Erreur sauvegarde");
+  }
+}
+
+// ============ AJOUTER UN EXERCICE À LA SÉANCE ============
+
+function addExercise() {
+  const exoName = document.getElementById('exo-search').value.trim();
+  const sets = parseInt(document.getElementById('exo-sets').value) || 3;
+  const reps = parseInt(document.getElementById('exo-reps').value) || 10;
+  const weight = parseFloat(document.getElementById('exo-weight').value) || 0;
+  const rest = parseInt(document.getElementById('exo-rest').value) || 90;
+  const notes = document.getElementById('exo-notes').value.trim();
+
+  if (!exoName) {
+    notify("❌ Sélectionnez un exercice");
+    return;
+  }
+
+  // Créer l'objet exercice
+  const exercise = {
+    id: Date.now(),
+    name: exoName,
+    sets: sets,
+    reps: reps,
+    weight: weight,
+    rest: rest,
+    notes: notes
+  };
+
+  // Initialiser le tableau s'il n'existe pas
+  if (!window._currentSessionExercises) {
+    window._currentSessionExercises = [];
+  }
+
+  // Ajouter l'exercice
+  window._currentSessionExercises.push(exercise);
+
+  // Vider le formulaire
+  document.getElementById('exo-search').value = '';
+  document.getElementById('exo-sets').value = '3';
+  document.getElementById('exo-reps').value = '10';
+  document.getElementById('exo-weight').value = '0';
+  document.getElementById('exo-rest').value = '90';
+  document.getElementById('exo-notes').value = '';
+  document.getElementById('exo-selected-badge').style.display = 'none';
+
+  notify("✅ Exercice ajouté !");
+
+  // Afficher la liste des exercices
+  renderSessionExercises();
+}
+
+// AFFICHER LA LISTE DES EXERCICES DE LA SÉANCE
+function renderSessionExercises() {
+  const list = document.getElementById('session-exercises');
+  const exos = window._currentSessionExercises || [];
+
+  if (exos.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-ico">🏋️</div><p>Aucun exercice ajouté</p></div>';
+    return;
+  }
+
+  list.innerHTML = exos.map((exo, idx) => `
+    <div class="sexo-item">
+      <div class="sexo-info">
+        <div class="sexo-name">${exo.name}</div>
+        <div class="sexo-meta">${exo.sets} × ${exo.reps} @ ${exo.weight}kg (repos: ${exo.rest}s)</div>
+        ${exo.notes ? `<div class="sexo-meta" style="color:var(--acc3);margin-top:4px">📝 ${exo.notes}</div>` : ''}
+      </div>
+      <button class="btn btn-g btn-sm" onclick="removeExercise(${idx})">🗑️</button>
+    </div>
+  `).join('');
+}
+
+// SUPPRIMER UN EXERCICE DE LA SÉANCE
+function removeExercise(index) {
+  if (!window._currentSessionExercises) return;
+  window._currentSessionExercises.splice(index, 1);
+  renderSessionExercises();
+  notify("✅ Exercice supprimé");
+}
+
 </script>
 </body>
 </html>
