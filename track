@@ -1302,11 +1302,26 @@ async function saveDB(){
 window._loadDBFromFirestore = async function(uid) {
   try {
     const snap = await window._fbGetDoc('users', uid);
-    if(snap.exists && snap.data && snap.data().data) {
-      const parsed = JSON.parse(snap.data().data);
-      DB = {...DB, ...parsed};
+    if(snap.exists && snap.data) {
+      // Firestore retourne directement l'objet, pas besoin de parser
+      DB = {...DB, ...snap.data};
       if(!DB.foods) DB.foods=[];
       if(!DB.goals) DB.goals={cal:0,prot:0,carb:0,fat:0};
+      if(!DB.sessions) DB.sessions=[];
+      if(!DB.weights) DB.weights=[];
+      if(!DB.measurements) DB.measurements=[];
+      if(!DB.programs) DB.programs=[];
+    } else {
+      // Nouvel utilisateur - initialiser la structure
+      DB = {
+        profile: { name: '', height: 0, goal: '' },
+        sessions: [],
+        weights: [],
+        measurements: [],
+        programs: [],
+        foods: [],
+        goals: { cal: 0, prot: 0, carb: 0, fat: 0 }
+      };
     }
     // Init UI after loading
     document.getElementById('history-filter').value=new Date().toISOString().slice(0,7);
